@@ -8,6 +8,7 @@ import re
 import os
 import shutil
 from datetime import datetime
+from pathlib import Path
 from docx import Document
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -41,6 +42,7 @@ class InternshipSystem(ctk.CTk):
         self.show_frame("LoginFrame")
 
     def init_db(self):
+        # Використовуємо назву бази даних згідно з техзавданням
         conn = sqlite3.connect('internship_system.db')
         cursor = conn.cursor()
         cursor.execute("PRAGMA foreign_keys = ON;")
@@ -48,7 +50,8 @@ class InternshipSystem(ctk.CTk):
         cursor.execute('''CREATE TABLE IF NOT EXISTS students (id INTEGER PRIMARY KEY AUTOINCREMENT, fullname TEXT, specialty TEXT)''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS companies (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, address TEXT)''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS internships (id INTEGER PRIMARY KEY AUTOINCREMENT, student_id INTEGER, company_id INTEGER, start_date TEXT, end_date TEXT, status TEXT, grade INTEGER, FOREIGN KEY(student_id) REFERENCES students(id) ON DELETE CASCADE, FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE CASCADE)''')
-        conn.commit(); conn.close()
+        conn.commit()
+        conn.close()
 
     def show_frame(self, page_name):
         frame = self.frames[page_name]
@@ -169,7 +172,6 @@ class MainAppFrame(ctk.CTkFrame):
         super().__init__(parent, fg_color="transparent")
         self.controller = controller
         self.sidebar = ctk.CTkFrame(self, width=260, corner_radius=0, border_width=1); self.sidebar.pack(side="left", fill="y")
-        # СКРОЛОВАНА ОБЛАСТЬ ДЛЯ АДАПТИВНОСТІ
         self.content = ctk.CTkScrollableFrame(self, fg_color="transparent", corner_radius=0); self.content.pack(side="right", expand=True, fill="both", padx=10, pady=10)
 
     def build_menu(self):
@@ -177,12 +179,10 @@ class MainAppFrame(ctk.CTkFrame):
         u = self.controller.current_user
         ctk.CTkLabel(self.sidebar, text=f"👤 {u['role'].upper()}", font=("Arial", 18, "bold"), text_color="cyan").pack(pady=30)
         
-        # Кнопки з перевіркою доступу
         btns = [("Мій кабінет", self.show_profile), ("Учні ліцею", self.show_students), ("Підприємства", self.show_companies), 
                 ("Практика", self.show_internships), ("Аналітика", self.show_stats), ("Допомога", self.show_help)]
         
         for t, c in btns:
-            # Учень бачить лише "Кабінет" та "Оцінку". "Допомога" прихована.
             if u['role'] == "Учень" and t != "Мій кабінет": continue
             ctk.CTkButton(self.sidebar, text=t, height=45, command=c).pack(pady=5, padx=15, fill="x")
         
@@ -212,7 +212,6 @@ class MainAppFrame(ctk.CTkFrame):
         self.clear(); u = self.controller.current_user
         ctk.CTkLabel(self.content, text="БАЗА УЧНІВ", font=("Arial", 24, "bold")).pack(pady=10)
         
-        # Пошук у реальному часі
         sf = ctk.CTkFrame(self.content); sf.pack(fill="x", pady=5)
         self.se = ctk.CTkEntry(sf, placeholder_text="🔍 Пошук за прізвищем...", width=400)
         self.se.grid(row=0, column=0, padx=10, pady=10); self.se.bind("<KeyRelease>", self.filter_st)
@@ -298,10 +297,41 @@ class MainAppFrame(ctk.CTkFrame):
             conn.commit(); conn.close(); ref()
 
     def rep_docx(self):
+        # Оновлений метод генерації звіту у "Завантаження"
         sel = self.tr_in.selection()
-        if sel:
+        if not sel:
+            messagebox.showwarning("Вибір", "Будь ласка, виберіть студента з таблиці!")
+            return
+
+        try:
             r = self.tr_in.item(sel[0])['values']
-            d = Document(); d.add_heading('Звіт про практику', 0); d.add_paragraph(f"Студент: {r[1]}\nКомпанія: {r[2]}\nОцінка: {r[5]}"); d.save(f"Звіт_{r[1]}.docx"); messagebox.showinfo("Word", "Файл створено")
+            student_name, company_name, grade = str(r[1]), str(r[2]), str(r[5])
+            downloads_path = str(Path.home() / "Downloads")
+            safe_name = "".join([c for c in student_name if c.isalnum() or c in (' ', '_')]).rstrip()
+            file_name = f"Zvit_{safe_name}.docx"
+            full_path = os.path.join(downloads_path, file_name)
+            
+            # Шукаємо шаблон поруч із програмою
+            template_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "template.docx")
+            
+            if os.path.exists(template_path):
+                doc = Document(template_path)
+                for p in doc.paragraphs:
+                    if "{student}" in p.text: p.text = p.text.replace("{student}", student_name)
+                    if "{company}" in p.text: p.text = p.text.replace("{company}", company_name)
+                    if "{grade}" in p.text: p.text = p.text.replace("{grade}", grade)
+            else:
+                doc = Document()
+                doc.add_heading('Звіт про виробничу практику', 0)
+                doc.add_paragraph(f"Студент: {student_name}")
+                doc.add_paragraph(f"Компанія: {company_name}")
+                doc.add_paragraph(f"Оцінка: {grade}")
+            
+            doc.save(full_path)
+            messagebox.showinfo("Успіх", f"Звіт збережено у Завантаження:\n{file_name}")
+            os.startfile(downloads_path) # Відкриваємо папку для зручності
+        except Exception as e:
+            messagebox.showerror("Помилка", f"Не вдалося створити звіт: {str(e)}")
 
     def export_ex(self):
         conn = sqlite3.connect('internship_system.db'); df = pd.read_sql_query("SELECT * FROM students", conn); conn.close()
